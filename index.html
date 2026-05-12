@@ -1,12 +1,43 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>万象数字馆</title>
-  </head>
-  <body>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { background-color: #121212; color: white; margin: 0; }
+        #root { min-height: 100vh; }
+    </style>
+</head>
+<body>
     <div id="root"></div>
-    <script type="module" src="/App.tsx"></script>
-  </body>
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
+
+        // 这里就是你的 App 核心逻辑
+        function App() {
+            return (
+                <div className="flex items-center justify-center h-screen">
+                    <div className="text-center">
+                        <h1 className="text-2xl font-bold mb-4">万象数字馆</h1>
+                        <p className="text-gray-400">正在从本地存储读取数据...</p>
+                        <button 
+                            onClick={() => window.location.reload()}
+                            className="mt-6 px-4 py-2 bg-blue-600 rounded-lg"
+                        >
+                            点击刷新
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>
