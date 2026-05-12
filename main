@@ -1,0 +1,813 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { useState, useMemo, useEffect, FormEvent } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Search, 
+  X, 
+  Lightbulb, 
+  BookOpen, 
+  Database,
+  Calendar,
+  ArrowRight,
+  Plus,
+  HelpCircle,
+  Eye,
+  EyeOff,
+  Trash2,
+  ChevronRight,
+  Edit2,
+  Lock,
+  Settings,
+  Save,
+  Check,
+  Key,
+  ShieldCheck,
+  CloudDownload,
+  Sun,
+  Moon,
+  Type
+} from 'lucide-react';
+
+// --- 类型定义 ---
+
+interface TreeNodeData {
+  id: string;
+  text: string;
+  fullLine: string;
+  level: number;
+  children: TreeNodeData[];
+}
+
+interface Note {
+  id: string;
+  text: string;
+  date: string;
+  isPrivate?: boolean;
+}
+
+interface Book {
+  id: string;
+  title: string;
+  author: string;
+  progress: number;
+  thoughts?: string;
+}
+
+interface Knowledge {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+}
+
+// --- 核心工具：知识树解析 ---
+
+function parseKnowledgeToTree(text: string): TreeNodeData[] {
+  const lines = text.split('\n');
+  const root: TreeNodeData[] = [];
+  const stack: { node: TreeNodeData; level: number }[] = [];
+
+  lines.forEach((line, index) => {
+    if (!line.trim()) return;
+    const dashMatch = line.match(/^(\s*-+)\s*(.*)/);
+    let level = 0;
+    let content = line.trim();
+
+    if (dashMatch) {
+      level = dashMatch[1].trim().length;
+      content = dashMatch[2].trim();
+    }
+
+    const newNode: TreeNodeData = {
+      id: `node-${index}-${content.slice(0, 10)}`,
+      text: content,
+      fullLine: line,
+      level: level,
+      children: []
+    };
+
+    if (level === 0) {
+      root.push(newNode);
+      stack.length = 0;
+      stack.push({ node: newNode, level: 0 });
+    } else {
+      while (stack.length > 0 && stack[stack.length - 1].level >= level) {
+        stack.pop();
+      }
+      if (stack.length > 0) {
+        stack[stack.length - 1].node.children.push(newNode);
+        stack.push({ node: newNode, level: level });
+      } else {
+        root.push(newNode);
+        stack.push({ node: newNode, level: level });
+      }
+    }
+  });
+  return root;
+}
+
+// --- 树状节点显示 ---
+
+function KnowledgeTreeNode({ node, isLast, depth = 0, onEdit, fontSize, isDarkMode }: { node: TreeNodeData; isLast: boolean; depth: number; onEdit: () => void; fontSize: number; isDarkMode: boolean }) {
+  const [isOpen, setIsOpen] = useState(true);
+  const hasChildren = node.children.length > 0;
+
+  return (
+    <div className={`relative ${depth === 0 ? 'mb-2' : 'ml-6'}`}>
+      <div className="flex items-start group">
+        {depth > 0 && (
+          <div className="absolute left-[-22px] top-0 bottom-0 w-[22px]">
+            <div className={`absolute left-0 top-0 w-[2px] ${isDarkMode ? 'bg-neutral-800' : 'bg-neutral-200/60'} ${isLast ? 'h-[16px]' : 'h-full'}`} />
+            <div className={`absolute left-0 top-[16px] w-4 h-[2px] ${isDarkMode ? 'bg-neutral-800' : 'bg-neutral-200/60'} rounded-full`} />
+          </div>
+        )}
+        <div 
+          className={`flex-grow flex items-start gap-2 py-1.5 px-3 rounded-xl transition-all cursor-pointer ${isDarkMode ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-50'}`}
+          onClick={onEdit}
+        >
+          {hasChildren && (
+            <button 
+              onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
+              className={`mt-1 p-0.5 rounded ${isDarkMode ? 'hover:bg-neutral-800 text-neutral-500' : 'hover:bg-neutral-200 text-neutral-400'}`}
+            >
+              <motion.div animate={{ rotate: isOpen ? 90 : 0 }}>
+                <ChevronRight className="w-3 h-3" />
+              </motion.div>
+            </button>
+          )}
+          <span 
+            className={`leading-relaxed ${hasChildren || depth === 0 ? (isDarkMode ? 'font-black text-white' : 'font-black text-neutral-900') : (isDarkMode ? 'text-neutral-400 font-medium' : 'text-neutral-600 font-medium')}`}
+            style={{ fontSize: `${fontSize}px` }}
+          >
+            {node.text}
+          </span>
+        </div>
+      </div>
+      <AnimatePresence>
+        {hasChildren && isOpen && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+            {node.children.map((child, idx) => (
+              <KnowledgeTreeNode key={child.id} node={child} isLast={idx === node.children.length - 1} depth={depth + 1} onEdit={onEdit} fontSize={fontSize} isDarkMode={isDarkMode} />
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// --- 卡片组件 ---
+
+function NoteItem({ note, onDelete, isDarkMode }: { note: Note, onDelete: (id: string) => void, isDarkMode: boolean }) {
+  const isFlashcard = note.text.includes('::');
+  const [isFlipped, setIsFlipped] = useState(false);
+  const [q, a] = isFlashcard ? note.text.split('::').map(s => s.trim()) : ['', ''];
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      onClick={() => isFlashcard && setIsFlipped(!isFlipped)}
+      className={`p-6 rounded-[32px] border relative flex flex-col justify-between transition-all cursor-pointer group ${
+        isFlashcard 
+          ? (isFlipped 
+              ? (isDarkMode ? 'bg-indigo-600 border-indigo-500 shadow-xl shadow-indigo-500/20' : 'bg-black border-black shadow-xl shadow-black/20') 
+              : (isDarkMode ? 'bg-[#1E1E1E] border-neutral-800 hover:border-neutral-700' : 'bg-white border-neutral-200 hover:border-black/10'))
+          : (isDarkMode ? 'bg-[#1E1E1E] border-neutral-800 hover:shadow-2xl' : 'bg-white border-neutral-200 hover:shadow-lg')
+      }`}
+    >
+      <button 
+        onClick={(e) => { e.stopPropagation(); onDelete(note.id); }}
+        className={`absolute top-4 right-4 p-2 rounded-full opacity-0 group-hover:opacity-100 transition-all z-10 ${
+          isDarkMode ? 'hover:bg-neutral-800 text-neutral-600 hover:text-red-400' : 'hover:bg-red-50 text-neutral-300 hover:text-red-500'
+        }`}
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+
+      {isFlashcard ? (
+        <div className="flex-grow">
+          <div className="flex items-center justify-between mb-4">
+             <div className={`p-1.5 rounded-lg ${isFlipped ? (isDarkMode ? 'bg-white/20' : 'bg-white/20') : (isDarkMode ? 'bg-neutral-800' : 'bg-neutral-100')}`}>
+                <HelpCircle className={`w-4 h-4 ${isFlipped ? 'text-white' : (isDarkMode ? 'text-indigo-400' : 'text-neutral-900')}`} />
+             </div>
+          </div>
+          <h4 className={`text-[10px] font-black uppercase tracking-widest mb-1 ${isFlipped ? 'text-white/60' : (isDarkMode ? 'text-neutral-500' : 'text-neutral-400')}`}>
+            {isFlipped ? '解析回答' : '核心提问'}
+          </h4>
+          <p className={`text-[16px] font-black leading-tight ${isFlipped ? 'text-white' : (isDarkMode ? 'text-[#E5E7EB]' : 'text-neutral-900')}`}>
+            {isFlipped ? a : q}
+          </p>
+        </div>
+      ) : (
+        <p className={`leading-relaxed text-[15px] pr-8 ${isDarkMode ? 'text-neutral-400' : 'text-neutral-700'}`}>{note.text}</p>
+      )}
+
+      <div className={`mt-4 pt-4 border-t flex items-center justify-between text-[10px] font-black tracking-widest ${
+        isFlipped 
+          ? (isDarkMode ? 'border-white/10 text-white/40' : 'border-white/10 text-white/40') 
+          : (isDarkMode ? 'border-neutral-800 text-neutral-600' : 'border-neutral-50 text-neutral-300')
+      }`}>
+        <span>{note.date}</span>
+        {isFlashcard && <span>{isFlipped ? '点击翻转' : '点击查看'}</span>}
+      </div>
+    </motion.div>
+  );
+}
+
+// --- 初始数据 ---
+
+const INITIAL_NOTES: Note[] = [
+  { id: '1', text: '创新不是从无到有，而是对现有知识的重新排列组合。', date: '2024-05-15' },
+  { id: '2', text: '元认知 :: 对自己思考过程的认知与监控。', date: '2024-05-16' },
+];
+
+const INITIAL_BOOKS: Book[] = [
+  { id: 'b1', title: '深度工作', author: '卡尔·纽波特', progress: 35, thoughts: '在高强度的状态下专注。' },
+];
+
+const INITIAL_KNOW: Knowledge[] = [
+  { id: 'k1', title: '黄金圈思维', category: '思维模型', content: '从为什么开始。\n- Why (为什么)\n-- 核心信念与目的\n- How (怎么做)\n-- 执行方法与策略\n- What (做什么)\n-- 最终产品与结果' },
+];
+
+// --- APP 主程序 ---
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<'notes' | 'books' | 'knowledge'>('notes');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('lib_theme') === 'dark');
+
+  // 数据状态
+  const [notes, setNotes] = useState<Note[]>(() => JSON.parse(localStorage.getItem('lib_notes') || JSON.stringify(INITIAL_NOTES)));
+  const [books, setBooks] = useState<Book[]>(() => JSON.parse(localStorage.getItem('lib_books') || JSON.stringify(INITIAL_BOOKS)));
+  const [knowledge, setKnowledge] = useState<Knowledge[]>(() => JSON.parse(localStorage.getItem('lib_knowledge') || JSON.stringify(INITIAL_KNOW)));
+  const [privateNotes, setPrivateNotes] = useState<Note[]>(() => JSON.parse(localStorage.getItem('@private_data') || '[]'));
+
+  // 密码与隐私认证状态
+  const [vaultPassword, setVaultPassword] = useState(() => localStorage.getItem('@vault_password') || '1234');
+  const [isVaultActive, setIsVaultActive] = useState(false);
+  const [showVaultAuth, setShowVaultAuth] = useState(false);
+  const [vaultInput, setVaultInput] = useState('');
+  const [longPressTimer, setLongPressTimer] = useState<any>(null);
+
+  // 修改密码相关
+  const [showChangePassModal, setShowChangePassModal] = useState(false);
+  const [oldPassInput, setOldPassInput] = useState('');
+  const [newPassInput, setNewPassInput] = useState('');
+  const [confirmPassInput, setConfirmPassInput] = useState('');
+
+  // 详情与编辑
+  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+
+  // 设置状态
+  const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem('lib_font') || 16));
+  const [showSettings, setShowSettings] = useState(false);
+
+  // 表单状态
+  const [f1, setF1] = useState(''); // 标题
+  const [f2, setF2] = useState(''); // 内容
+  const [f3, setF3] = useState(''); // 标签
+
+  // 持久化
+  useEffect(() => localStorage.setItem('lib_notes', JSON.stringify(notes)), [notes]);
+  useEffect(() => localStorage.setItem('lib_books', JSON.stringify(books)), [books]);
+  useEffect(() => localStorage.setItem('lib_knowledge', JSON.stringify(knowledge)), [knowledge]);
+  useEffect(() => localStorage.setItem('@private_data', JSON.stringify(privateNotes)), [privateNotes]);
+  useEffect(() => localStorage.setItem('lib_font', fontSize.toString()), [fontSize]);
+  useEffect(() => localStorage.setItem('@vault_password', vaultPassword), [vaultPassword]);
+  useEffect(() => {
+    localStorage.setItem('lib_theme', isDarkMode ? 'dark' : 'light');
+    if (isDarkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+  }, [isDarkMode]);
+
+  // 更新逻辑
+  const handleUpdateItem = (updated: any) => {
+    if (updated.isPrivate) setPrivateNotes(prev => prev.map(p => p.id === updated.id ? updated : p));
+    else if ('author' in updated) setBooks(prev => prev.map(b => b.id === updated.id ? updated : b));
+    else if ('category' in updated) setKnowledge(prev => prev.map(k => k.id === updated.id ? updated : k));
+    if (selectedItem?.id === updated.id) setSelectedItem(updated);
+  };
+
+  const handleAddNew = (e: FormEvent) => {
+    e.preventDefault();
+    const id = Date.now().toString();
+    const date = new Date().toLocaleDateString('zh-CN');
+    if (activeTab === 'notes') {
+      const text = f1 && f2 ? `${f1} :: ${f2}` : (f1 || f2);
+      if (isVaultActive) setPrivateNotes([{ id, text, date, isPrivate: true }, ...privateNotes]);
+      else setNotes([{ id, text, date }, ...notes]);
+    } else if (activeTab === 'books') {
+      setBooks([{ id, title: f1, author: f2, progress: 0, thoughts: '' }, ...books]);
+    } else {
+      setKnowledge([{ id, title: f1, content: f2, category: f3 || '记录' }, ...knowledge]);
+    }
+    setF1(''); setF2(''); setF3(''); setIsModalOpen(false);
+  };
+
+  // 数据快照与导出逻辑
+  const exportDataSnapshot = async () => {
+    try {
+      const snapshot = {
+        version: "1.0",
+        exportTime: new Date().toLocaleString('zh-CN'),
+        summary: {
+          notes: notes.length,
+          books: books.length,
+          knowledge: knowledge.length,
+          private: privateNotes.length
+        },
+        payload: {
+          notes,
+          books,
+          knowledge,
+          // 仅在隐私空间激活时导出隐私数据，否则提示保护
+          privateNotes: isVaultActive ? privateNotes : "[数据已加密，请解锁后导出]"
+        }
+      };
+
+      const dataStr = JSON.stringify(snapshot, null, 2);
+      
+      // 优先尝试原生分享 API (移动端体验最佳)
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: '万象数字馆全量备份',
+            text: `来自万象数字馆的数据备份快照\n时间：${snapshot.exportTime}\n内容摘要：${notes.length}灵感 | ${books.length}典藏 | ${knowledge.length}图谱`,
+            // 注意：某些浏览器对分享超长 text 有限制，此处仅分享摘要
+          });
+          // 分享完成后，小提示引导
+          alert('系统分享已调用，您可以将其发送至电脑或微信。');
+        } catch (shareErr) {
+          // 如果分享取消或失败，回退到文件下载
+          triggerDownload(dataStr);
+        }
+      } else {
+        triggerDownload(dataStr);
+      }
+    } catch (error) {
+      console.error('Backup failure:', error);
+      alert('备份操作异常，请检查存储空间');
+    }
+  };
+
+  // 辅助函数：触发物理文件下载
+  const triggerDownload = (content: string) => {
+    const blob = new Blob([content], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `万象馆备份_${new Date().getTime()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    alert('本地分享不可用，已自动下载 .json 格式备份文件。');
+  };
+
+  const handleDelete = () => {
+    if (!deleteTarget) return;
+    const { id, type } = deleteTarget;
+    if (type === 'notes') {
+      if (isVaultActive) setPrivateNotes(prev => prev.filter(p => p.id !== id));
+      else setNotes(prev => prev.filter(p => p.id !== id));
+    } else if (type === 'books') setBooks(prev => prev.filter(b => b.id !== id));
+    else setKnowledge(prev => prev.filter(k => k.id !== id));
+    if (selectedItem?.id === id) setSelectedItem(null);
+    setDeleteTarget(null);
+  };
+
+  // 修改密码逻辑
+  const handleChangePassword = (e: FormEvent) => {
+    e.preventDefault();
+    if (oldPassInput !== vaultPassword) {
+      alert('原密码错误，请重新输入');
+      return;
+    }
+    if (newPassInput.length < 4) {
+      alert('新密码长度不能少于4位');
+      return;
+    }
+    if (newPassInput !== confirmPassInput) {
+      alert('两次输入的新密码不一致');
+      return;
+    }
+    setVaultPassword(newPassInput);
+    setShowChangePassModal(false);
+    setOldPassInput('');
+    setNewPassInput('');
+    setConfirmPassInput('');
+    alert('密码修改成功，请牢记新密码');
+    // 修改成功后退出隐私空间强制重验
+    setIsVaultActive(false);
+  };
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    let source: any[] = [];
+    if (activeTab === 'notes') source = isVaultActive ? privateNotes : notes;
+    else if (activeTab === 'books') source = books;
+    else source = knowledge;
+    return source.filter(i => (i.text || i.title || i.author || i.content || '').toLowerCase().includes(q));
+  }, [activeTab, notes, books, knowledge, privateNotes, isVaultActive, searchQuery]);
+
+  return (
+    <div className={`min-h-screen transition-colors duration-300 ${isDarkMode ? 'bg-[#121212] text-[#E5E7EB]' : 'bg-[#F8F9FA] text-neutral-900'} font-['system-ui',-apple-system] selection:bg-black selection:text-white pb-32 select-none overflow-x-hidden`}>
+      
+      {/* 顶部 */}
+      <header className={`backdrop-blur-3xl border-b sticky top-0 z-[100] ${isDarkMode ? 'bg-[#121212]/80 border-neutral-800' : 'bg-white/80 border-neutral-100'}`}>
+        <div className="max-w-4xl mx-auto px-6 h-20 flex items-center justify-between">
+          <div 
+            className="flex items-center gap-3 active:scale-95 transition-transform cursor-pointer"
+            onMouseDown={() => setLongPressTimer(setTimeout(() => setShowVaultAuth(true), 2000))}
+            onMouseUp={() => clearTimeout(longPressTimer)}
+            onTouchStart={() => setLongPressTimer(setTimeout(() => setShowVaultAuth(true), 2000))}
+            onTouchEnd={() => clearTimeout(longPressTimer)}
+          >
+            <div className={`w-11 h-11 rounded-full flex items-center justify-center transition-all ${isVaultActive ? 'bg-indigo-600 shadow-xl shadow-indigo-200' : (isDarkMode ? 'bg-neutral-800 text-white' : 'bg-black shadow-lg shadow-black/10')}`}>
+              <Database className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className={`text-xl font-black tracking-tight ${isDarkMode ? 'text-white' : 'text-neutral-900'}`}>万象数字馆</h1>
+              <p className={`text-[10px] font-black uppercase tracking-[0.3em] ${isDarkMode ? 'text-neutral-500' : 'text-neutral-400'}`}>
+                {isVaultActive ? '已进入物理隔离空间' : '智库学习与管理系统'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className={`p-3 rounded-2xl border transition-all shadow-sm ${isDarkMode ? 'bg-neutral-800 border-neutral-700 text-yellow-400 hover:bg-neutral-700' : 'bg-white border-neutral-200 text-neutral-400 hover:text-black'}`}
+            >
+              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            {isVaultActive && (
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowChangePassModal(true)} className={`p-3 border rounded-2xl transition-all shadow-sm ${isDarkMode ? 'bg-neutral-800 border-neutral-700 text-neutral-400' : 'bg-white border-neutral-200 text-neutral-400 hover:text-indigo-600'}`}>
+                  <Key className="w-5 h-5" />
+                </button>
+                <button onClick={() => setIsVaultActive(false)} className={`p-3 rounded-2xl transition-all ${isDarkMode ? 'bg-indigo-900/30 text-indigo-400 hover:bg-indigo-900/50' : 'bg-indigo-50 text-indigo-600 hover:bg-neutral-100'}`}>
+                  <Lock className="w-5 h-5" />
+                </button>
+              </div>
+            )}
+            <button onClick={exportDataSnapshot} className={`p-3 border rounded-2xl transition-all shadow-sm ${isDarkMode ? 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white' : 'bg-white border-neutral-100 text-neutral-400 hover:text-black hover:bg-neutral-50'}`}>
+              <CloudDownload className="w-5 h-5" />
+            </button>
+            <button onClick={() => setIsModalOpen(true)} className={`p-3.5 rounded-2xl shadow-xl active:scale-90 transition-all ${isDarkMode ? 'bg-white text-black' : 'bg-black text-white shadow-black/10'}`}>
+              <Plus className="w-6 h-6" />
+            </button>
+          </div>
+        </div>
+
+        {/* 搜素 */}
+        <div className="max-w-4xl mx-auto px-6 pb-4">
+          <div className="relative group mb-4">
+            <Search className={`absolute left-4 top-1/2 -translate-y-1/2 w-4.5 h-4.5 ${isDarkMode ? 'text-neutral-600' : 'text-neutral-300'}`} />
+            <input 
+              type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              placeholder="搜索灵感、书名、深度感悟或知识点..."
+              className={`w-full pl-12 pr-12 py-4 border-none rounded-[24px] text-[15px] outline-none transition-all placeholder-neutral-400 font-bold ${
+                isDarkMode ? 'bg-neutral-800 focus:bg-neutral-700 text-white focus:ring-8 focus:ring-white/5' : 'bg-neutral-100 focus:bg-white focus:ring-8 focus:ring-black/5'
+              }`}
+            />
+            {searchQuery && <button onClick={() => setSearchQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400"><X className="w-5 h-5" /></button>}
+          </div>
+
+          <div className="flex items-center gap-6 overflow-x-auto no-scrollbar scroll-smooth">
+            {[
+              { id: 'notes', label: isVaultActive ? '私密仓库' : '灵感笔记', icon: Lightbulb },
+              { id: 'books', label: '读书馆', icon: BookOpen },
+              { id: 'knowledge', label: '知识库', icon: Database },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`flex items-center gap-2 py-2 px-1 text-[12px] font-black tracking-widest transition-all relative border-b-2 whitespace-nowrap ${
+                  activeTab === tab.id 
+                    ? (isDarkMode ? 'border-white text-white scale-105' : 'border-black text-black scale-105') 
+                    : (isDarkMode ? 'border-transparent text-neutral-600' : 'border-transparent text-neutral-300')
+                }`}
+              >
+                <tab.icon className={`w-3.5 h-3.5 ${activeTab === tab.id ? (isDarkMode ? 'text-white' : 'text-black') : (isDarkMode ? 'text-neutral-800' : 'text-neutral-200')}`} />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {/* 列表 */}
+      <main className="max-w-4xl mx-auto px-6 py-10">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <AnimatePresence mode="popLayout">
+            {activeTab === 'notes' && filtered.map(i => <NoteItem key={i.id} note={i} isDarkMode={isDarkMode} onDelete={id => setDeleteTarget({ id, type: 'notes' })} />)}
+            {activeTab === 'books' && filtered.map(b => (
+              <motion.div key={b.id} layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} onClick={() => { setSelectedItem(b); setIsEditing(false); }} className={`border rounded-[36px] p-6 hover:shadow-2xl transition-all group cursor-pointer flex items-center gap-5 ${isDarkMode ? 'bg-[#1E1E1E] border-neutral-800' : 'bg-white border-neutral-200'}`}>
+                <div className={`w-14 h-16 rounded-2xl flex items-center justify-center shrink-0 shadow-inner transition-colors ${isDarkMode ? 'bg-neutral-800 group-hover:bg-neutral-700' : 'bg-neutral-50 group-hover:bg-neutral-100'}`}>
+                  <BookOpen className={`w-7 h-7 ${isDarkMode ? 'text-neutral-600' : 'text-neutral-300'}`} />
+                </div>
+                <div className="flex-grow">
+                  <h3 className={`font-black text-[16px] mb-0.5 ${isDarkMode ? 'text-white' : 'text-neutral-900'}`}>{b.title}</h3>
+                  <p className="text-[11px] text-neutral-400 font-bold">{b.author}</p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <div className={`flex-grow h-1 rounded-full overflow-hidden ${isDarkMode ? 'bg-neutral-800' : 'bg-neutral-100'}`}>
+                      <motion.div initial={{ width: 0 }} animate={{ width: `${b.progress}%` }} className={`h-full ${isDarkMode ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.3)]' : 'bg-black shadow-[0_0_8px_rgba(0,0,0,0.3)]'}`} />
+                    </div>
+                    <span className="text-[9px] font-black text-neutral-500">{b.progress}% 精读中</span>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+            {activeTab === 'knowledge' && filtered.map(k => (
+              <motion.div key={k.id} layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} onClick={() => { setSelectedItem(k); setIsEditing(false); }} className={`border rounded-[36px] p-8 hover:shadow-2xl transition-all cursor-pointer group ${isDarkMode ? 'bg-[#1E1E1E] border-neutral-800' : 'bg-white border-neutral-200'}`}>
+                <div className="flex items-center justify-between mb-4">
+                  <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${isDarkMode ? 'text-neutral-500 bg-neutral-800' : 'text-neutral-400 bg-neutral-50'}`}>{k.category}</span>
+                  <Database className={`w-4 h-4 ${isDarkMode ? 'text-neutral-700' : 'text-neutral-200'}`} />
+                </div>
+                <h3 className={`font-extrabold text-xl leading-snug mb-4 transition-colors ${isDarkMode ? 'text-white group-hover:text-indigo-400' : 'text-neutral-900 group-hover:text-indigo-600'}`}>{k.title}</h3>
+                <div className={`flex items-center gap-1.5 text-[9px] font-black ${isDarkMode ? 'text-neutral-600' : 'text-neutral-300'}`}>
+                  <ArrowRight className="w-3 h-3" />
+                  <span>可视化网络视图</span>
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      </main>
+
+      {/* 详情 */}
+      <AnimatePresence>
+        {selectedItem && (
+          <div className="fixed inset-0 z-[150] flex items-end md:items-center justify-center p-0 md:p-6 overflow-hidden">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedItem(null)} className="absolute inset-0 bg-black/70 backdrop-blur-md" />
+            <motion.div
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 200 }}
+              className={`relative w-full max-w-4xl h-[95vh] md:h-[90vh] rounded-t-[56px] md:rounded-[56px] shadow-3xl flex flex-col ${isDarkMode ? 'bg-[#1E1E1E]' : 'bg-white'}`}
+            >
+              <div className={`p-8 md:p-10 border-b flex items-center justify-between shrink-0 ${isDarkMode ? 'border-neutral-800' : 'border-neutral-100'}`}>
+                <div className="flex items-center gap-5">
+                   <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${'author' in selectedItem ? (isDarkMode ? 'bg-neutral-800 text-neutral-500' : 'bg-neutral-50 text-neutral-400') : (isDarkMode ? 'bg-white text-black' : 'bg-black text-white')}`}>
+                      {'author' in selectedItem ? <BookOpen className="w-6 h-6" /> : <Database className="w-6 h-6" />}
+                   </div>
+                   <div className="flex flex-col">
+                      <h2 className={`text-xl font-black tracking-tight leading-none mb-1.5 ${isDarkMode ? 'text-white' : 'text-neutral-900'}`}>{selectedItem.title}</h2>
+                      <p className={`text-[11px] font-bold ${isDarkMode ? 'text-neutral-500' : 'text-neutral-400'}`}>
+                        {'author' in selectedItem ? `作者: ${selectedItem.author}` : `领域: ${selectedItem.category}`}
+                      </p>
+                   </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  {!isEditing && (
+                    <div className={`flex items-center gap-1 p-1 rounded-2xl border transition-colors ${isDarkMode ? 'bg-neutral-800 border-neutral-700' : 'bg-neutral-50 border-neutral-100'}`}>
+                      <button 
+                        onClick={() => setFontSize(Math.max(12, fontSize - 2))}
+                        className={`p-2.5 rounded-xl transition-all ${isDarkMode ? 'hover:bg-neutral-700 text-neutral-400' : 'hover:bg-white text-neutral-400 hover:text-black shadow-sm'}`}
+                      >
+                        <span className="text-xs font-black">A-</span>
+                      </button>
+                      <div className={`w-[1px] h-4 ${isDarkMode ? 'bg-neutral-700' : 'bg-neutral-200'}`} />
+                      <button 
+                        onClick={() => setFontSize(Math.min(24, fontSize + 2))}
+                        className={`p-2.5 rounded-xl transition-all ${isDarkMode ? 'hover:bg-neutral-700 text-neutral-400' : 'hover:bg-white text-neutral-400 hover:text-black shadow-sm'}`}
+                      >
+                        <span className="text-xs font-black">A+</span>
+                      </button>
+                    </div>
+                  )}
+                  <button onClick={() => setIsEditing(!isEditing)} className={`p-4 rounded-2xl transition-all ${isEditing ? (isDarkMode ? 'bg-white text-black shadow-xl shadow-white/5' : 'bg-neutral-900 text-white shadow-xl shadow-black/10') : (isDarkMode ? 'bg-neutral-800 text-neutral-500 hover:text-white' : 'bg-neutral-100 text-neutral-400 hover:text-black')}`}>
+                    {isEditing ? <Check className="w-5 h-5" /> : <Edit2 className="w-5 h-5" />}
+                  </button>
+                  <button onClick={() => setDeleteTarget({ id: selectedItem.id, type: 'author' in selectedItem ? 'books' : 'knowledge' })} className={`p-4 rounded-2xl transition-all ${isDarkMode ? 'bg-red-900/20 text-red-400' : 'bg-red-50 text-red-500 hover:bg-red-100'}`}>
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                  <button onClick={() => setSelectedItem(null)} className={`p-4 rounded-2xl transition-all ${isDarkMode ? 'bg-neutral-800 text-neutral-200' : 'bg-black text-white'}`}>
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-grow overflow-y-auto p-6 md:p-14 no-scrollbar max-h-[70vh]">
+                {!isEditing ? (
+                  <div className="max-w-2xl mx-auto space-y-12">
+                    {'author' in selectedItem ? (
+                      <>
+                        <div className={`p-8 rounded-[40px] ${isDarkMode ? 'bg-neutral-900 shadow-inner' : 'bg-neutral-50'}`}>
+                          <div className="flex items-center justify-between mb-6">
+                            <span className={`text-[10px] font-black uppercase tracking-widest ${isDarkMode ? 'text-neutral-600' : 'text-neutral-400'}`}>阅读进度</span>
+                            <span className={`text-3xl font-black ${isDarkMode ? 'text-white' : 'text-neutral-900'}`}>{selectedItem.progress}%</span>
+                          </div>
+                          <input type="range" min="0" max="100" value={selectedItem.progress} onChange={e => handleUpdateItem({...selectedItem, progress: Number(e.target.value)})} className={`w-full cursor-pointer rounded-full h-1.5 accent-indigo-500 ${isDarkMode ? 'bg-neutral-800' : 'bg-neutral-200'}`} />
+                        </div>
+                        <div className="space-y-6">
+                          <h4 className="text-[12px] font-black uppercase tracking-widest text-neutral-400 ml-4">深度感悟与总结</h4>
+                          <div style={{ fontSize: `${fontSize}px` }} className={`p-10 border border-dashed rounded-[48px] min-h-[200px] leading-relaxed whitespace-pre-wrap font-serif transition-colors ${isDarkMode ? 'bg-neutral-900/50 border-neutral-800 text-neutral-400' : 'bg-white border-neutral-200 text-neutral-600'}`}>
+                            {selectedItem.thoughts || "点击上方编辑按钮，记录您的读书笔记..."}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className={`flex items-center gap-3 border-b pb-6 mb-8 ${isDarkMode ? 'border-neutral-800' : 'border-neutral-100'}`}>
+                          <Database className={`w-4 h-4 ${isDarkMode ? 'text-neutral-600' : 'text-neutral-300'}`} />
+                          <h4 className={`text-[14px] font-black uppercase tracking-widest ${isDarkMode ? 'text-neutral-500' : 'text-neutral-400'}`}>思维逻辑结构图</h4>
+                        </div>
+                        <div className={`rounded-[40px] border p-6 pb-20 ${isDarkMode ? 'bg-[#121212] border-neutral-800' : 'bg-white border-neutral-50'}`} style={{ fontSize: `${fontSize}px` }}>
+                          {parseKnowledgeToTree(selectedItem.content).map((n, i, arr) => (
+                            <KnowledgeTreeNode key={n.id} node={n} isLast={i === arr.length - 1} depth={0} onEdit={() => setIsEditing(true)} fontSize={fontSize} isDarkMode={isDarkMode} />
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="max-w-2xl mx-auto h-full flex flex-col gap-8">
+                    {'author' in selectedItem ? (
+                      <div className="space-y-6">
+                         <div className="space-y-2">
+                            <label className="text-[10px] font-black text-neutral-400 ml-4 uppercase tracking-widest">书名 / 作者</label>
+                            <div className="grid grid-cols-2 gap-4">
+                               <input value={selectedItem.title} onChange={e => handleUpdateItem({...selectedItem, title: e.target.value})} className={`p-6 rounded-3xl font-black outline-none border transition-colors ${isDarkMode ? 'bg-neutral-900 border-neutral-800 focus:border-indigo-500 text-white' : 'bg-neutral-50 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="书名" />
+                               <input value={selectedItem.author} onChange={e => handleUpdateItem({...selectedItem, author: e.target.value})} className={`p-6 rounded-3xl font-black outline-none border transition-colors ${isDarkMode ? 'bg-neutral-900 border-neutral-800 focus:border-indigo-500 text-white' : 'bg-neutral-50 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="作者" />
+                            </div>
+                         </div>
+                         <div className="space-y-2">
+                           <label className="text-[10px] font-black text-neutral-400 ml-4 uppercase tracking-widest">阅读感悟</label>
+                           <textarea value={selectedItem.thoughts} onChange={e => handleUpdateItem({...selectedItem, thoughts: e.target.value})} className={`w-full p-8 rounded-[40px] outline-none min-h-[400px] text-lg font-serif resize-none border transition-colors ${isDarkMode ? 'bg-neutral-900 border-neutral-800 focus:border-indigo-500 text-white' : 'bg-neutral-50 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="在此输入感悟..." />
+                         </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                         <div className="space-y-2">
+                            <label className="text-[10px] font-black text-neutral-400 ml-4 uppercase tracking-widest">标题 / 分类</label>
+                            <div className="grid grid-cols-2 gap-4">
+                               <input value={selectedItem.title} onChange={e => handleUpdateItem({...selectedItem, title: e.target.value})} className={`p-6 rounded-3xl font-black outline-none border transition-colors ${isDarkMode ? 'bg-neutral-900 border-neutral-800 focus:border-indigo-500 text-white' : 'bg-neutral-50 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="标题" />
+                               <input value={selectedItem.category} onChange={e => handleUpdateItem({...selectedItem, category: e.target.value})} className={`p-6 rounded-3xl font-black outline-none border transition-colors ${isDarkMode ? 'bg-neutral-900 border-neutral-800 focus:border-indigo-500 text-white' : 'bg-neutral-50 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="分类" />
+                            </div>
+                         </div>
+                         <div className="space-y-2">
+                           <label className="text-[10px] font-black text-neutral-400 ml-4 uppercase tracking-widest">思维层级内容 (使用 - 符号)</label>
+                           <textarea value={selectedItem.content} onChange={e => handleUpdateItem({...selectedItem, content: e.target.value})} className={`w-full p-8 rounded-[40px] outline-none min-h-[500px] text-lg font-serif resize-none border transition-colors ${isDarkMode ? 'bg-neutral-900 border-neutral-800 focus:border-indigo-500 text-white' : 'bg-neutral-50 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="使用 - 构建层级..." />
+                         </div>
+                      </div>
+                    )}
+                    <button onClick={() => setIsEditing(false)} className={`w-full py-7 rounded-[32px] font-black text-lg tracking-widest shadow-2xl transition-all active:scale-95 ${isDarkMode ? 'bg-white text-black' : 'bg-black text-white'}`}>保存数据并返回</button>
+                  </div>
+                )}
+              </div>
+
+              {/* 弹窗底部：操作区 */}
+              <div className={`px-10 py-6 border-t flex items-center justify-between shrink-0 ${isDarkMode ? 'bg-neutral-900/50 border-neutral-800' : 'bg-neutral-50/50 border-neutral-100'}`}>
+                 <div className="flex items-center gap-4">
+                    <button onClick={() => setShowSettings(!showSettings)} className={`p-3 border rounded-2xl transition-all shadow-sm ${isDarkMode ? 'bg-neutral-800 border-neutral-700 text-neutral-500' : 'bg-white border-neutral-200 text-neutral-400 hover:text-black'}`}>
+                       <Settings className="w-5 h-5" />
+                    </button>
+                    {showSettings && (
+                      <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className={`flex items-center gap-2 px-4 py-2 border rounded-2xl ${isDarkMode ? 'bg-neutral-800 border-neutral-700' : 'bg-white border-neutral-200'}`}>
+                         <button onClick={() => setFontSize(Math.max(12, fontSize - 2))} className={`w-8 h-8 font-black rounded-md ${isDarkMode ? 'hover:bg-neutral-700' : 'hover:bg-neutral-50'}`}>A-</button>
+                         <div className={`w-[1px] h-3 ${isDarkMode ? 'bg-neutral-700' : 'bg-neutral-200'}`} />
+                         <span className={`text-[10px] font-black w-6 text-center ${isDarkMode ? 'text-white' : 'text-black'}`}>{fontSize}</span>
+                         <div className={`w-[1px] h-3 ${isDarkMode ? 'bg-neutral-700' : 'bg-neutral-200'}`} />
+                         <button onClick={() => setFontSize(Math.min(32, fontSize + 2))} className={`w-8 h-8 font-black rounded-md ${isDarkMode ? 'hover:bg-neutral-700' : 'hover:bg-neutral-50'}`}>A+</button>
+                      </motion.div>
+                    )}
+                 </div>
+                 <div className="text-[9px] font-black text-neutral-400 uppercase tracking-widest italic opacity-60">
+                    档案流水号: {selectedItem.id}
+                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 修改密码弹窗 */}
+      <AnimatePresence>
+        {showChangePassModal && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-6">
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowChangePassModal(false)} className="absolute inset-0 bg-black/60 backdrop-blur-xl" />
+             <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className={`relative w-full max-w-sm rounded-[48px] shadow-3xl p-10 overflow-hidden ${isDarkMode ? 'bg-[#1E1E1E] border border-neutral-800' : 'bg-white'}`}>
+                <form onSubmit={handleChangePassword} className="space-y-6">
+                   <div className="flex justify-between items-center mb-4">
+                      <h2 className={`text-xl font-black ${isDarkMode ? 'text-white' : 'text-black'}`}>修改访问密码</h2>
+                      <button type="button" onClick={() => setShowChangePassModal(false)} className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-neutral-800' : 'hover:bg-neutral-100'}`}><X className={`w-6 h-6 ${isDarkMode ? 'text-neutral-600' : 'text-neutral-300'}`} /></button>
+                   </div>
+                   <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-neutral-400 ml-2 uppercase">当前旧密码</label>
+                        <input type="password" required value={oldPassInput} onChange={e => setOldPassInput(e.target.value)} className={`w-full p-5 rounded-2xl outline-none transition-colors ${isDarkMode ? 'bg-neutral-900 text-white focus:ring-4 focus:ring-white/5 placeholder:text-neutral-800' : 'bg-neutral-100 focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="旧密码" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-neutral-400 ml-2 uppercase">新密码 (4位以上)</label>
+                        <input type="password" required value={newPassInput} onChange={e => setNewPassInput(e.target.value)} className={`w-full p-5 rounded-2xl outline-none transition-colors ${isDarkMode ? 'bg-neutral-900 text-white focus:ring-4 focus:ring-white/5 placeholder:text-neutral-800' : 'bg-neutral-100 focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="输入新密码" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-neutral-400 ml-2 uppercase">确认新密码</label>
+                        <input type="password" required value={confirmPassInput} onChange={e => setConfirmPassInput(e.target.value)} className={`w-full p-5 rounded-2xl outline-none transition-colors ${isDarkMode ? 'bg-neutral-900 text-white focus:ring-4 focus:ring-white/5 placeholder:text-neutral-800' : 'bg-neutral-100 focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="再次输入新密码" />
+                      </div>
+                   </div>
+                   <button type="submit" className={`w-full py-5 rounded-[24px] font-black shadow-lg transition-all active:scale-95 ${isDarkMode ? 'shadow-indigo-500/20 bg-indigo-600 text-white' : 'shadow-indigo-200 bg-indigo-600 text-white'}`}>更新并锁定空间</button>
+                </form>
+             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 新建 */}
+      <AnimatePresence>
+        {isModalOpen && (
+          <div className="fixed inset-0 z-[250] flex items-center justify-center p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsModalOpen(false)} className="absolute inset-0 bg-black/40 backdrop-blur-xl" />
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 50 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 50 }} className={`relative w-full max-w-xl rounded-[56px] shadow-3xl p-8 md:p-12 overflow-hidden border transition-colors max-h-[90vh] overflow-y-auto no-scrollbar ${isDarkMode ? 'bg-[#1E1E1E] border-neutral-800' : 'bg-white border-transparent'}`}>
+               <form onSubmit={handleAddNew} className="space-y-6 md:space-y-8">
+                  <div className="flex justify-between items-center">
+                    <h2 className={`text-xl md:text-2xl font-black ${isDarkMode ? 'text-white' : 'text-neutral-900'}`}>新建数字档案</h2>
+                    <button type="button" onClick={() => setIsModalOpen(false)} className={`p-2 md:p-3 rounded-2xl transition-colors ${isDarkMode ? 'hover:bg-neutral-800' : 'hover:bg-neutral-100'}`}><X className={`w-6 h-6 md:w-7 md:h-7 ${isDarkMode ? 'text-neutral-600' : 'text-neutral-300'}`} /></button>
+                  </div>
+                  <div className="space-y-4 md:space-y-6">
+                    <input required value={f1} onChange={e => setF1(e.target.value)} className={`w-full p-5 md:p-6 rounded-[28px] outline-none font-bold text-base md:text-lg transition-all border ${isDarkMode ? 'bg-neutral-900 border-neutral-800 text-white focus:border-indigo-500' : 'bg-neutral-100 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="标题 / 书名" />
+                    <textarea value={f2} onChange={e => setF2(e.target.value)} className={`w-full p-5 md:p-6 rounded-[28px] min-h-[120px] md:min-h-[140px] outline-none text-[14px] md:text-[15px] border transition-all ${isDarkMode ? 'bg-neutral-900 border-neutral-800 text-white focus:border-indigo-500' : 'bg-neutral-100 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder={activeTab === 'knowledge' ? "使用 - 符号构建层级" : "内容 / 作者"} />
+                    {activeTab === 'knowledge' && <input value={f3} onChange={e => setF3(e.target.value)} className={`w-full p-5 md:p-6 rounded-[28px] outline-none font-bold border transition-all ${isDarkMode ? 'bg-neutral-900 border-neutral-800 text-white focus:border-indigo-500' : 'bg-neutral-100 border-transparent focus:bg-white focus:ring-4 focus:ring-black/5'}`} placeholder="分类标签" />}
+                  </div>
+                  <button type="submit" className={`w-full py-5 md:py-6 rounded-[28px] font-black shadow-2xl active:scale-95 transition-all ${isDarkMode ? 'bg-white text-black' : 'bg-black text-white shadow-black/20'}`}>保存档案</button>
+               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 删除确认 */}
+      <AnimatePresence>
+        {deleteTarget && (
+          <div className="fixed inset-0 z-[350] flex items-center justify-center p-6 text-center">
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeleteTarget(null)} className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+             <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className={`relative w-full max-w-sm rounded-[48px] shadow-3xl p-12 transition-colors ${isDarkMode ? 'bg-[#1E1E1E] border border-neutral-800' : 'bg-white'}`}>
+               <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 ${isDarkMode ? 'bg-red-400/10 text-red-400' : 'bg-red-50 text-red-500'}`}><Trash2 className="w-8 h-8" /></div>
+               <h3 className={`text-xl font-black mb-2 ${isDarkMode ? 'text-white' : 'text-neutral-900'}`}>确定删除档案？</h3>
+               <p className="text-sm text-neutral-400 mb-8 leading-relaxed font-medium">该记录将从本地数据库中永久消失。</p>
+               <div className="flex gap-4">
+                  <button onClick={() => setDeleteTarget(null)} className={`flex-1 py-4 font-black transition-colors ${isDarkMode ? 'text-neutral-600 hover:text-white' : 'text-neutral-400 hover:text-black'}`}>保留</button>
+                  <button onClick={handleDelete} className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-black shadow-lg shadow-red-500/20 active:scale-95">删除</button>
+               </div>
+             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 隐私锁屏 */}
+      <AnimatePresence>
+        {showVaultAuth && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 text-center">
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowVaultAuth(false)} className="absolute inset-0 bg-neutral-900/50 backdrop-blur-3xl" />
+             <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 30 }} className={`relative w-full max-w-sm rounded-[56px] shadow-3xl p-14 border transition-colors ${isDarkMode ? 'bg-[#1E1E1E] border-white/10' : 'bg-white border-white/20'}`}>
+               <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-8 shadow-inner ring-4 ${isDarkMode ? 'bg-indigo-400/10 text-indigo-400 ring-indigo-400/5' : 'bg-indigo-50 text-indigo-600 ring-indigo-100'}`}>
+                  <Eye className="w-8 h-8" />
+               </div>
+               <h2 className={`text-2xl font-black mb-3 ${isDarkMode ? 'text-white' : 'text-neutral-900'}`}>认证访问</h2>
+               <p className="text-sm text-neutral-400 mb-10 font-medium">请输入认证密码以进入极密空间。</p>
+               <form onSubmit={(e) => {
+                  e.preventDefault();
+                  if (vaultInput === vaultPassword) { 
+                    setIsVaultActive(true); 
+                    setShowVaultAuth(false); 
+                    setVaultInput(''); 
+                  }
+                  else { alert('验证失败'); setVaultInput(''); }
+               }} className="space-y-5">
+                  <input type="password" autoFocus value={vaultInput} onChange={e => setVaultInput(e.target.value)} placeholder="••••" className={`w-full p-6 rounded-[32px] text-center text-4xl font-black tracking-[0.5em] focus:ring-12 outline-none transition-all placeholder:text-neutral-200 ${isDarkMode ? 'bg-neutral-900 text-indigo-400 focus:ring-indigo-400/10' : 'bg-neutral-50 text-indigo-600 focus:ring-indigo-500/10'}`} />
+                  <button type="submit" className={`w-full py-6 rounded-[28px] font-black shadow-2xl active:scale-95 transition-all text-sm tracking-widest ${isDarkMode ? 'bg-white text-black shadow-white/5' : 'bg-indigo-600 text-white shadow-indigo-500/30'}`}>认证并解锁</button>
+               </form>
+             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 统计 */}
+      <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-10 px-12 py-5 backdrop-blur-3xl border rounded-full shadow-3xl z-[50] transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1E1E]/90 border-neutral-800' : 'bg-white/90 border-neutral-100'}`}>
+        <div className="flex flex-col items-center gap-0.5">
+          <span className={`text-[17px] font-black leading-none ${isDarkMode ? 'text-white' : 'text-black'}`}>{notes.length}</span>
+          <span className="text-[9px] font-black uppercase text-neutral-300 tracking-[0.2em]">灵感</span>
+        </div>
+        <div className={`w-[1px] h-6 ${isDarkMode ? 'bg-neutral-800' : 'bg-neutral-100'}`} />
+        <div className="flex flex-col items-center gap-0.5">
+          <span className={`text-[17px] font-black leading-none ${isDarkMode ? 'text-white' : 'text-black'}`}>{books.length}</span>
+          <span className="text-[9px] font-black uppercase text-neutral-300 tracking-[0.2em]">典藏</span>
+        </div>
+        <div className={`w-[1px] h-6 ${isDarkMode ? 'bg-neutral-800' : 'bg-neutral-100'}`} />
+        <div className="flex flex-col items-center gap-0.5">
+          <span className={`text-[17px] font-black leading-none ${isDarkMode ? 'text-white' : 'text-black'}`}>{knowledge.length}</span>
+          <span className="text-[9px] font-black uppercase text-neutral-300 tracking-[0.2em]">图谱</span>
+        </div>
+      </div>
+    </div>
+  );
+}
